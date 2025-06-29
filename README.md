@@ -13,11 +13,13 @@ Autonomous-Wheel-Loader-Perception/
 │   ├── preprocessing/                # Preprocessing module
 │   ├── slam/                         # SLAM module
 │   ├── volume_estimation/            # Volume Estimation module
+│   │   └── registration.py
+│   │   └── cleaning.py
+│   │   └── volume_estimation.py
 │   ├── visualization/                # Visualization utilities
 ├── tests/                            # Unit and integration tests
-├── scripts/                          # Helper scripts (demo launch, etc.)
-│   ├── run_demo.sh
 ├── main.py                           # Entry point for running the full pipeline
+├── demo.py                           # Visualization the full pipeline
 └── requirements.txt                  # Python dependency list
 ```
 
