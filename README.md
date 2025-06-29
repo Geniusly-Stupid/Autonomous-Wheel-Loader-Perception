@@ -28,3 +28,7 @@ python src\slam\kinfu.py --config src\slam\configs\fr1_room.yaml --save_dir data
 python src\slam\kinfu_gui.py --config src\slam\configs\fr1_room.yaml # Frame-by-frame SLAM Visualization
 python src\visualization\visualize_ply.py data\reconstruct\slam\mesh.ply # Final Result Visualization
 ```
+
+## Reference
+
+- [KinectFusion-python](https://github.com/shiyoung77/KinectFusion-python): A Python implementation of KinectFusion.
