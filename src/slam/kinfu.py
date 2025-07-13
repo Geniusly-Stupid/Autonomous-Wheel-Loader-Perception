@@ -5,17 +5,15 @@ import torch
 import cv2
 import trimesh
 from matplotlib import pyplot as plt
-from fusion import TSDFVolumeTorch
-from dataset.tum_rgbd import TUMDataset, TUMDatasetOnline
-from tracker import ICPTracker
-from utils import load_config, get_volume_setting, get_time
+from .fusion import TSDFVolumeTorch
+from .dataset.tum_rgbd import TUMDataset, TUMDatasetOnline
+from .tracker import ICPTracker
+from .utils import load_config, get_volume_setting, get_time
 
-
-if __name__ == "__main__":
+def main(config_path, save_dir):
     parser = argparse.ArgumentParser()
-    # standard configs
-    parser.add_argument('--config', type=str, default="configs/fr1_desk.yaml", help='Path to config file.')
-    parser.add_argument("--save_dir", type=str, default=None, help="Directory of saving results.")
+    parser.add_argument('--config', type=str, default=config_path)
+    parser.add_argument('--save_dir', type=str, default=save_dir)
     args = load_config(parser.parse_args())
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

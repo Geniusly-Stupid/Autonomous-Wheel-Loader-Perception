@@ -2,6 +2,14 @@ import open3d as o3d
 import argparse
 import sys
 
+def load_ply(ply_path):
+    mesh = o3d.io.read_triangle_mesh(ply_path)
+    if mesh.is_empty():
+        return None
+    if not mesh.has_vertex_normals():
+        mesh.compute_vertex_normals()
+    return mesh
+
 def load_and_visualize(ply_path):
     # 尝试以三角网格的方式加载 PLY 文件
     mesh = o3d.io.read_triangle_mesh(ply_path)

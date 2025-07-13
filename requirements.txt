@@ -1,5 +1,5 @@
 torch
-torchvision==0.2.0
+torchvision
 open3d
 numpy
 opencv-python
@@ -12,3 +12,6 @@ tqdm
 matplotlib
 scipy
 alphashape
+streamlit
+plotly
+pytube
