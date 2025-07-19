@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial import ConvexHull
-import alphashape
+# import alphashape
 import trimesh
 import matplotlib.pyplot as plt
 import open3d as o3d

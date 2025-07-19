@@ -7,6 +7,7 @@ import cv2
 import trimesh
 import time
 import os
+import glob
 from src.slam.fusion import TSDFVolumeTorch
 from src.slam.dataset.tum_rgbd import TUMDataset
 from src.slam.tracker import ICPTracker
@@ -48,35 +49,39 @@ def detect_loader(pcd, min_bound, max_bound, threshold):
         return False  # Loader not detected
 
 class SLAM:
-    def __init__(self, rgb_folder, depth_folder, cam_intr, voxel_size, margin, device):
+    def __init__(self, cam_intr, margin, device, args):
         """
         Initialize the SLAM system.
         
         This initializes the SLAM system, including the TSDF volume and ICP tracker.
 
         Args:
-        - rgb_folder (str): Path to the folder containing RGB images.
-        - depth_folder (str): Path to the folder containing depth images.
         - cam_intr (array): Camera intrinsic parameters (focal length, principal point).
         - voxel_size (float): Voxel size for the TSDF volume.
         - margin (float): Margin for the TSDF volume.
         - device (str): The device (CPU or GPU) to use for computation.
         """
-        self.rgb_folder = rgb_folder
-        self.depth_folder = depth_folder
         self.cam_intr = cam_intr  # Camera intrinsics
         self.device = device
+        self.args = args
+        vol_dims, vol_origin, voxel_size = get_volume_setting(args)
 
         # Initialize TSDF Volume
-        self.tsdf_volume = TSDFVolumeTorch(voxel_dim=[128, 128, 128], 
-                                           origin=[0, 0, 0], 
+        self.tsdf_volume = TSDFVolumeTorch(voxel_dim=vol_dims, 
+                                           origin=vol_origin, 
                                            voxel_size=voxel_size, 
                                            device=device, 
-                                           margin=margin)
+                                           margin=margin,
+                                           fuse_color=True)
         self.frame_index = 0
-        self.icp_tracker = ICPTracker()  # Initialize ICPTracker
+        self.icp_tracker = ICPTracker(args=self.args, device=self.device)  # Initialize ICPTracker
+        
+        # Store previous depth image for tracking
+        self.prev_depth = None
+        self.prev_rgb = None
+        self.cam_pose = torch.eye(4, device=self.device).float()
 
-    def process_frame(self, rgb_frame, depth_frame, cam_pose, obs_weight=1.0):
+    def process_frame(self, rgb_frame, depth_frame, cam_pose, color_img, obs_weight=1.0):
         """
         Process a single frame in the SLAM system.
         
@@ -93,11 +98,27 @@ class SLAM:
         rgb = self.preprocess_image(rgb_frame)  # Convert RGB to tensor
         depth = self.preprocess_depth(depth_frame)  # Convert depth to tensor
         
+        # Perform tracking if we have a previous frame
+        if self.prev_depth is not None:
+            # Convert camera intrinsics to tensor
+            K = torch.tensor(self.cam_intr[:3, :3], device=self.device).float()
+            
+            # Perform tracking using ICPTracker
+            rel_pose = self.icp_tracker(self.prev_depth, depth, K)
+            
+            # Update camera pose
+            self.cam_pose = rel_pose @ self.cam_pose
+        
+        # Store current frame for next tracking
+        self.prev_depth = depth
+        self.prev_rgb = rgb
+        
         # Perform integration of this frame into the TSDF volume
         self.tsdf_volume.integrate(depth_im=depth, 
                                    cam_intr=self.cam_intr, 
                                    cam_pose=cam_pose, 
-                                   obs_weight=obs_weight)
+                                   obs_weight=obs_weight,
+                                   color_img=color_img)
         
         self.frame_index += 1
 
@@ -105,126 +126,175 @@ class SLAM:
         """
         This method converts the RGB frame to a torch tensor and moves it to the appropriate device (GPU/CPU).
         """
-        return torch.tensor(rgb_frame).float().to(self.device)
+        # Convert to float32 and normalize to [0, 1]
+        rgb_frame = rgb_frame.astype(np.float32) / 255.0
+        return torch.tensor(rgb_frame).float().to(self.device).float()
 
     def preprocess_depth(self, depth_frame):
         """
         This method converts the depth frame to a torch tensor and moves it to the appropriate device (GPU/CPU).
         """
-        return torch.tensor(depth_frame).float().to(self.device)
-
-    def icp_registration(self, source_pcd, target_pcd):
-        """
-        Perform ICP registration between two point clouds.
-
-        This method uses ICPTracker to register the source point cloud to the target point cloud and
-        returns the resulting transformation.
-
-        Args:
-        - source_pcd (PointCloud): Source point cloud.
-        - target_pcd (PointCloud): Target point cloud.
-
-        Returns:
-        - array: Transformation matrix resulting from ICP registration.
-        """
-        return self.icp_tracker.register(source_pcd, target_pcd)
+        # Convert to float32 and ensure values are in meters
+        depth_frame = depth_frame.astype(np.float32) / 1000.0
+        return torch.tensor(depth_frame).float().to(self.device).float()
 
     def get_tsdf(self):
         """
         Get the current TSDF volume.
         """
-        return self.tsdf_volume.get_volume()
+        return self.tsdf_volume
+    
+    def get_current_pose(self):
+        """
+        Get the current pose.
+        """
+        return self.cam_pose
+        
 
 
 class FrameProcessor:
-    def __init__(self, trans_init_loader_path):
+    def __init__(self, trans_init_loader, cam_intr, depth_intr, loader_pcd, args):
         """
         Initialize the frame processor for handling frames and processing them through the SLAM system.
         
         Args:
         - trans_init_loader_path (str): Path to the initial loader transformation matrix (JSON/NPY).
         """
-        self.trans_init_loader_path = trans_init_loader_path
         self.index = 0  # Start with the first frame
         self.rgb_images = []  # To store RGB images
         self.depth_images = []  # To store depth images
+        self.point_clouds = []  # Store processed point clouds
+        self.args = args
         
         # volume estimation setting
-        self.min_bound_tracker = [-0.1, 0.04, 0.2]
-        self.max_bound_tracker = [0.1, 0.12, 0.4]
+        self.min_bound_tracker = [-0.1, -0.1, 0.2]
+        self.max_bound_tracker = [0.5, 0.5, 0.35]
+        self.threshold = 1  # Threshold for loader detection
         
-        self.loader_pcd = None
+        self.loader_pcd = loader_pcd
         
         self.icp_threshold = 0.02
         
         self.is_alpha_shape = False
         
-        self.trans_init_loader = None
-        if self.trans_init_loader_path.endswith(".json"):
-            with open(self.trans_init_loader_path, 'r') as f:
-                self.trans_init_loader = np.array(json.load(f))
-        elif self.trans_init_loader_path.endswith(".npy"):
-            self.trans_init_loader = np.load(self.trans_init_loader_path)
-        else:
-            raise ValueError("Unsupported transformation file format. Use .json or .npy")
+        self.trans_init_loader = trans_init_loader
+        self.cam_intr = cam_intr
+        self.depth_intr = depth_intr
+        print("cam_intr: \n", cam_intr)
+        print("depth_intr: \n", depth_intr)
         
         # SLAM setting
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.slam_system = SLAM(
-            rgb_folder="path_to_rgb_folder", 
-            depth_folder="path_to_depth_folder", 
             cam_intr=self.cam_intr,  # Camera intrinsics
-            voxel_size=0.01, 
             margin=3.0, 
-            device=self.device
+            device=self.device,
+            args=self.args
         )
+        self.cam_pose = np.eye(4)
         
         # result
         self.tsdf_volume = None
         self.is_frame_loader = False
         self.loader_volume = 0.0
     
-    def apply_transformation(self, pcd, transformation):
+    def apply_transformation(self, pcd, registration_result):
         """
-        This method applies the transformation matrix to the given point cloud and returns the transformed point cloud.
+        Apply transformation to a point cloud and return the transformed point cloud
+        
+        Args:
+            pcd: Open3D point cloud
+            registration_result: Either a 4x4 numpy array or an ICP RegistrationResult
+            
+        Returns:
+            Transformed point cloud
         """
-        pcd_copy = pcd.copy()
+        # Create a copy of the point cloud
+        pcd_copy = o3d.geometry.PointCloud(pcd)
+        
+        # Extract transformation matrix from registration result if needed
+        if hasattr(registration_result, 'transformation'):
+            transformation = registration_result.transformation
+        else:
+            transformation = registration_result
+        
+        # Ensure transformation is numpy array
+        if isinstance(transformation, torch.Tensor):
+            transformation = transformation.cpu().numpy()
+        
+        # Apply transformation
         pcd_copy.transform(transformation)
         return pcd_copy
-
-    def read_next_frame(self, rgb_image, depth_image):
-        """
-        Read the next frame of RGB and depth images and process them into a point cloud.
-        
-        This method converts the input RGB and depth images into a point cloud and increments the frame index.
-
-        Args:
-        - rgb_image (array): The RGB image.
-        - depth_image (array): The depth image.
-
-        Returns:
-        - PointCloud: The point cloud generated from the RGB and depth images.
-        """
-        # Store the images in memory
+    
+    def read_next_frame(self, rgb_image, depth_image, rgb_intr_matrix, depth_intr_matrix):
+        # Store the images in memory for future reference
         self.rgb_images.append(rgb_image)
         self.depth_images.append(depth_image)
 
-        # Create a point cloud from the depth image
-        depth_image_o3d = o3d.geometry.Image(np.array(depth_image))
-        rgb_image_o3d = o3d.geometry.Image(np.array(rgb_image))
+        # Convert input images to numpy arrays if they aren't already
+        rgb_image = np.array(rgb_image)
+        depth_image = np.array(depth_image)
 
-        # Define intrinsic parameters for a typical RGB-D camera
-        width, height = 640, 480
-        fx, fy = 525.0, 525.0  # Focal lengths (in pixels)
-        cx, cy = width / 2, height / 2  # Principal point (usually in the center)
+        # Convert depth values from millimeters to meters
+        depth_image = depth_image.astype(np.float32) / 1000.0
 
-        # Create an intrinsics object
-        depth_intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy)
-        
-        # Create point cloud from depth image
+        # Create Open3D image objects from numpy arrays
+        depth_image_o3d = o3d.geometry.Image(depth_image)
+        rgb_image_o3d = o3d.geometry.Image(rgb_image)
+
+        # Set up depth camera intrinsics using provided matrix
+        depth_intrinsics = o3d.camera.PinholeCameraIntrinsic()
+        depth_intrinsics.set_intrinsics(width=depth_image.shape[1], height=depth_image.shape[0],
+                                        fx=depth_intr_matrix[0, 0], fy=depth_intr_matrix[1, 1],
+                                        cx=depth_intr_matrix[0, 2], cy=depth_intr_matrix[1, 2])
+
+        # Set up RGB camera intrinsics using provided matrix
+        rgb_intrinsics = o3d.camera.PinholeCameraIntrinsic()
+        rgb_intrinsics.set_intrinsics(width=rgb_image.shape[1], height=rgb_image.shape[0],
+                                      fx=rgb_intr_matrix[0, 0], fy=rgb_intr_matrix[1, 1],
+                                      cx=rgb_intr_matrix[0, 2], cy=rgb_intr_matrix[1, 2])
+
+        # Generate point cloud from depth image using depth camera parameters
         pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_image_o3d, depth_intrinsics)
 
-        # Increment the index to read the next frame on the next call
+        # Get point coordinates from the point cloud
+        points = np.asarray(pcd.points)
+        height, width, _ = rgb_image.shape
+        
+        # Calculate projection of 3D points onto RGB image plane:
+        # Using perspective projection equations with RGB camera intrinsics
+        fx = rgb_intr_matrix[0, 0]  # Focal length in x direction
+        fy = rgb_intr_matrix[1, 1]  # Focal length in y direction
+        cx = rgb_intr_matrix[0, 2]  # Principal point x coordinate
+        cy = rgb_intr_matrix[1, 2]  # Principal point y coordinate
+        
+        # Project 3D points to 2D image coordinates
+        u = (points[:, 0] * fx / points[:, 2]) + cx  # x-coordinate in image
+        v = (points[:, 1] * fy / points[:, 2]) + cy  # y-coordinate in image
+        
+        # Convert projected coordinates to integer pixel indices
+        u = np.round(u).astype(int)
+        v = np.round(v).astype(int)
+        
+        # Initialize color array (will be black for invalid points)
+        colors = np.zeros_like(points)
+        
+        # Create mask for points that project within the RGB image bounds and have valid depth
+        valid_mask = (u >= 0) & (u < width) & (v >= 0) & (v < height) & (points[:, 2] > 0)
+        
+        # Convert BGR image to RGB color format (OpenCV uses BGR by default)
+        rgb_image_rgb = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2RGB)
+        
+        # Assign colors from RGB image to valid points (normalized to [0,1] range)
+        colors[valid_mask] = rgb_image_rgb[v[valid_mask], u[valid_mask]] / 255.0
+
+        # Set the colors for the point cloud
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+
+        # Store point cloud for later use
+        self.point_clouds.append(pcd)
+
+        # Increment frame counter for next call
         self.index += 1
 
         return pcd
@@ -240,25 +310,18 @@ class FrameProcessor:
         - rgb_image (array): The current RGB image.
         - depth_image (array): The current depth image.
         """
-        pcd = self.read_next_frame(rgb_image, depth_image)
+        pcd = self.read_next_frame(rgb_image, depth_image, self.cam_intr, self.depth_intr)
 
         # -------------------
         # SLAM 
         # --------------------
-        # STEP 1: Get ICP Transformation
-        if len(self.rgb_images) > 1:
-            # Perform ICP registration using SLAM system
-            previous_pcd = self.rgb_images[-2]  # The previous RGB image's point cloud
-            icp_transformation = self.slam_system.icp_registration(previous_pcd, pcd)  # SLAM system's ICP
-        else:
-            icp_transformation = np.eye(4)  # First frame, no registration
+        
+        # Process SLAM with the current frame
+        self.slam_system.process_frame(rgb_image, depth_image, self.cam_pose, color_img=rgb_image)
 
-        # STEP 2: Apply ICP transformation to current frame
-        cam_pose = icp_transformation
-
-        # STEP 3: Process SLAM with the updated camera pose
-        self.slam_system.process_frame(rgb_image, depth_image, cam_pose)
-
+        # Get the updated camera pose from SLAM system (you'll need to implement this)
+        self.cam_pose = self.slam_system.get_current_pose()
+        
         # STEP 4: Return the TSDF volume or other relevant information
         self.tsdf_volume = self.slam_system.get_tsdf()
         
@@ -273,14 +336,23 @@ class FrameProcessor:
             loader_poses = icp_registration_pcd(pcd, self.loader_pcd, self.trans_init_loader, self.icp_threshold)
 
             # Step 3: Project loader model based on the pose and crop it
-            transformed_loader_pcd = self.apply_transformation(self.loader_pcd, loader_poses)
+            transformed_loader_pcd = self.apply_transformation(pcd, loader_poses)
 
             # Crop the transformed loader model
             bbox = o3d.geometry.AxisAlignedBoundingBox(self.min_bound_tracker, self.max_bound_tracker)
             cropped_loader_pcd = transformed_loader_pcd.crop(bbox)
+            
+            # Step 4: Merge the cropped_loader_pcd with the original loader_pcd
+            merged_pcd = cropped_loader_pcd + self.loader_pcd  # You can also use self.loader_pcd.extend(cropped_loader_pcd.points)
+
+            # Step 4.1: Visualize the merged point cloud
+            o3d.visualization.draw_geometries(
+                [merged_pcd],
+                window_name="Merged Point Cloud"
+            )
 
             # Step 4: Volume estimation for the cropped loader point cloud
-            points = np.asarray(cropped_loader_pcd.points)
+            points = np.asarray(merged_pcd.points)
             if self.is_alpha_shape:
                 self.loader_volume, _ = VolumeEstimator.estimate_alpha_shape(points, alpha=10)
             else:
@@ -292,6 +364,15 @@ class FrameProcessor:
         
         return
 
+    def get_last_pcd(self):
+        """
+        Retrieve the last processed point cloud.
+        
+        Returns:
+        - open3d.geometry.PointCloud: The point cloud of the last processed frame
+        """
+        return self.point_clouds[-1] if self.point_clouds else None
+    
     def get_stored_frame(self):
         """
         Retrieve the last frame of stored RGB and depth images.
@@ -299,7 +380,7 @@ class FrameProcessor:
         Returns:
         - tuple: A tuple containing the last frame of stored RGB frames and depth frames.
         """
-        return self.rgb_images[-1], self.depth_images[-1]
+        return self.rgb_images[-1], self.depth_images[-1] if self.rgb_images else (None, None)
     
     def get_tsdf_volume(self):
         """
@@ -328,35 +409,105 @@ class FrameProcessor:
         """
         return self.loader_volume
 
-if __name__ == "__main__":
-    # Set up argument parser
-    parser = argparse.ArgumentParser(description="ICP Registration for Two Point Clouds")
-    parser.add_argument("--trans_init", type=str, default=r"data\trans_init.json", help="Path to initial transformation matrix (JSON/NPY/TXT)")
-    args = parser.parse_args()
-
-    # Initialize FrameProcessor with the provided arguments
-    processor = FrameProcessor(trans_init_loader_path=args.trans_init)
-
-    # Simulate reading RGB and depth frames (use real frames in practical application)
-    rgb_image = (np.random.rand(480, 640, 3) * 255).astype(np.uint8)  # Random RGB image
-    depth_image = (np.random.rand(480, 640) * 255).astype(np.uint16)  # Random depth image
-
-    # Process the next frame
-    processor.process_next_frame(rgb_image, depth_image)
-
-    # Get the processed TSDF volume from SLAM system
+def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_path, loader_pcd_path, args):
+    # Load camera intrinsics
+    def load_matrix(path):
+        if path.endswith(".json"):
+            with open(path, 'r') as f:
+                return np.array(json.load(f)['matrix'])
+        elif path.endswith(".npy"):
+            return np.load(path)
+        else:
+            raise ValueError("Unsupported file format. Use .json or .npy")
+    
+    rgb_intr = load_matrix(cam_intr_path)
+    depth_intr = load_matrix(depth_intr_path)
+    trans_init = load_matrix(trans_init_path)
+    loader_pcd = o3d.io.read_point_cloud(loader_pcd_path)
+    
+    # Initialize frame processor with matrices
+    processor = FrameProcessor(
+        trans_init_loader=trans_init,
+        cam_intr=rgb_intr,
+        depth_intr=depth_intr,
+        loader_pcd=loader_pcd,
+        args=args
+    )
+    
+    # Get sorted list of image files
+    rgb_files = sorted(glob.glob(os.path.join(rgb_folder, '*.jpg')))
+    depth_files = sorted(glob.glob(os.path.join(depth_folder, '*.png')))
+    
+    # Process each frame
+    for i, (rgb_path, depth_path) in enumerate(zip(rgb_files, depth_files)):
+        print(f"Processing frame {i+1}/{len(rgb_files)}: {os.path.basename(rgb_path)}")
+        start_time = time.time()
+        
+        # Read images
+        rgb_image = cv2.imread(rgb_path)
+        depth_image = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+        
+        if rgb_image is None or depth_image is None:
+            print(f"Error loading images: {rgb_path} or {depth_path}")
+            continue
+            
+        # Process frame
+        processor.process_next_frame(rgb_image, depth_image)
+        
+        # Get and visualize point cloud
+        pcd = processor.get_last_pcd()
+        # if pcd:
+        #     o3d.visualization.draw_geometries([pcd])
+        
+        print(f"Frame processed in {time.time() - start_time:.2f} seconds")
+    
+        # Get final results
+        loader_volume = processor.get_loader_volume()
+        
+        print(f"Loader volume: {loader_volume:.4f} cubic meters")
+    
+    
     tsdf_volume = processor.get_tsdf_volume()
+    
+    # Extract mesh from TSDF volume
+    verts, faces, norms, colors = tsdf_volume.get_mesh()
 
-    # Visualize the TSDF volume using Open3D
-    o3d.visualization.draw_geometries([tsdf_volume])
+    # Create Open3D mesh object
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(verts)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    mesh.vertex_normals = o3d.utility.Vector3dVector(norms)
+    mesh.vertex_colors = o3d.utility.Vector3dVector(colors[:, :3])  # Use only RGB if there's alpha channel
 
-    # Get stored frames and print the count of stored frames
-    rgb_frames, depth_frames = processor.get_stored_frames()
-    print(f"Stored {len(rgb_frames)} RGB frames and {len(depth_frames)} Depth frames")
+    # Simplify mesh if needed (optional)
+    mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=100000)
 
-    # Check if loader is detected in the current frame and print the loader volume
-    if processor.get_is_frame_loader():
-        print(f"Loader detected! Estimated loader volume: {processor.get_loader_volume()} cubic units")
-    else:
-        print("No loader detected in the current frame.")
+    # Remove duplicate vertices and triangles
+    mesh = mesh.remove_duplicated_vertices()
+    mesh = mesh.remove_duplicated_triangles()
 
+    # Compute normals if not already present
+    if not mesh.has_vertex_normals():
+        mesh.compute_vertex_normals()
+
+    print("TSDF reconstruction result:")
+    o3d.visualization.draw_geometries([mesh], window_name="3D Reconstruction")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Process RGBD frames for SLAM and volume estimation")
+    parser.add_argument("--config", type=str, default=r"data\loader\loader.yaml", help="Path to config file.")
+    parser.add_argument("--follow_camera", action="store_true", help="Make view-point follow the camera motion")
+    
+    # Parse and load configuration
+    parsed_args = parser.parse_args()
+    args = load_config(parsed_args)
+    
+    main(
+        rgb_folder=r"data\loader\color",
+        depth_folder=r"data\loader\depth",
+        trans_init_path=r"data\loader\trans_init.json",
+        cam_intr_path=r"data\loader\cam_intr.json",
+        depth_intr_path=r"data\loader\dep_intr.json",
+        loader_pcd_path=r"data\loader\loader_model.ply",
+        args=args
+    )
