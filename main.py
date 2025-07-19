@@ -103,29 +103,13 @@ class SLAM:
 
     def preprocess_image(self, rgb_frame):
         """
-        Preprocess the RGB frame.
-        
         This method converts the RGB frame to a torch tensor and moves it to the appropriate device (GPU/CPU).
-
-        Args:
-        - rgb_frame (array): RGB image frame.
-
-        Returns:
-        - tensor: Preprocessed RGB frame as a tensor.
         """
         return torch.tensor(rgb_frame).float().to(self.device)
 
     def preprocess_depth(self, depth_frame):
         """
-        Preprocess the depth frame.
-        
         This method converts the depth frame to a torch tensor and moves it to the appropriate device (GPU/CPU).
-
-        Args:
-        - depth_frame (array): Depth image frame.
-
-        Returns:
-        - tensor: Preprocessed depth frame as a tensor.
         """
         return torch.tensor(depth_frame).float().to(self.device)
 
@@ -148,9 +132,6 @@ class SLAM:
     def get_tsdf(self):
         """
         Get the current TSDF volume.
-
-        Returns:
-        - TSDFVolumeTorch: The TSDF volume object.
         """
         return self.tsdf_volume.get_volume()
 
@@ -205,16 +186,7 @@ class FrameProcessor:
     
     def apply_transformation(self, pcd, transformation):
         """
-        Apply the given transformation matrix to the point cloud.
-        
         This method applies the transformation matrix to the given point cloud and returns the transformed point cloud.
-
-        Args:
-        - pcd (PointCloud): Input point cloud.
-        - transformation (array): Transformation matrix to apply to the point cloud.
-
-        Returns:
-        - PointCloud: Transformed point cloud.
         """
         pcd_copy = pcd.copy()
         pcd_copy.transform(transformation)
@@ -320,14 +292,14 @@ class FrameProcessor:
         
         return
 
-    def get_stored_frames(self):
+    def get_stored_frame(self):
         """
-        Retrieve the stored RGB and depth frames.
+        Retrieve the last frame of stored RGB and depth images.
 
         Returns:
-        - tuple: A tuple containing the list of stored RGB frames and depth frames.
+        - tuple: A tuple containing the last frame of stored RGB frames and depth frames.
         """
-        return self.rgb_images, self.depth_images
+        return self.rgb_images[-1], self.depth_images[-1]
     
     def get_tsdf_volume(self):
         """
