@@ -328,27 +328,35 @@ class FrameProcessor:
         """
         return self.loader_volume
 
-
 if __name__ == "__main__":
+    # Set up argument parser
     parser = argparse.ArgumentParser(description="ICP Registration for Two Point Clouds")
     parser.add_argument("--trans_init", type=str, default=r"data\trans_init.json", help="Path to initial transformation matrix (JSON/NPY/TXT)")
-    parser.add_argument("--threshold", type=float, default=0.02, help="ICP threshold (max correspondence distance)")
-
     args = parser.parse_args()
 
-    # Initialize FrameProcessor with the provided arguments or defaults
-    processor = FrameProcessor(trans_init_path=args.trans_init, icp_threshold=args.threshold)
+    # Initialize FrameProcessor with the provided arguments
+    processor = FrameProcessor(trans_init_loader_path=args.trans_init)
 
-    # Simulating reading a single RGB and depth frame
+    # Simulate reading RGB and depth frames (use real frames in practical application)
     rgb_image = (np.random.rand(480, 640, 3) * 255).astype(np.uint8)  # Random RGB image
     depth_image = (np.random.rand(480, 640) * 255).astype(np.uint16)  # Random depth image
 
-    # Process the frames
-    tsdf_volume = processor.process_next_frame(rgb_image, depth_image)
+    # Process the next frame
+    processor.process_next_frame(rgb_image, depth_image)
 
-    # Visualize or further process the point cloud or TSDF volume
+    # Get the processed TSDF volume from SLAM system
+    tsdf_volume = processor.get_tsdf_volume()
+
+    # Visualize the TSDF volume using Open3D
     o3d.visualization.draw_geometries([tsdf_volume])
 
-    # Access stored frames
+    # Get stored frames and print the count of stored frames
     rgb_frames, depth_frames = processor.get_stored_frames()
     print(f"Stored {len(rgb_frames)} RGB frames and {len(depth_frames)} Depth frames")
+
+    # Check if loader is detected in the current frame and print the loader volume
+    if processor.get_is_frame_loader():
+        print(f"Loader detected! Estimated loader volume: {processor.get_loader_volume()} cubic units")
+    else:
+        print("No loader detected in the current frame.")
+
