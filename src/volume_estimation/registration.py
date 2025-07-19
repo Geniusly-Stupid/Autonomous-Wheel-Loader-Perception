@@ -42,6 +42,22 @@ def icp_registration(source_path, target_path, trans_init_file, threshold):
     
     return reg_p2p
 
+def icp_registration_pcd(source, target, trans_init, threshold):
+    
+    print("\nApplying point-to-point ICP...")
+    reg_p2p = o3d.pipelines.registration.registration_icp(
+        source, target, threshold, trans_init,
+        o3d.pipelines.registration.TransformationEstimationPointToPoint())
+    
+    print("\nICP Registration Result:")
+    print(reg_p2p)
+    print("\nFinal Transformation Matrix:")
+    print(reg_p2p.transformation)
+    
+    draw_registration_result(source, target, reg_p2p.transformation)
+    
+    return reg_p2p
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ICP Registration for Two Point Clouds")
     parser.add_argument("--source", type=str, required=True, help="Path to source point cloud (e.g., source.pcd)")
