@@ -66,10 +66,10 @@ paths = [
 ]
 
 colors = [
-    [1, 0, 0],  # Red
-    [0, 0, 1],  # Blue
-    [0, 1, 0],  # Green
-    [1, 1, 0],   # Yellow
+    [0, 0, 1],
+    [0, 0, 1],
+    [0, 0, 1],
+    [0, 0, 1],
 ]
 
 for i, path in enumerate(paths):

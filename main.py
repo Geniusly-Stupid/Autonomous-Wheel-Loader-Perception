@@ -197,6 +197,7 @@ class FrameProcessor:
         self.tsdf_volume = None
         self.is_frame_loader = False
         self.loader_volume = 0.0
+        self.loader_processed_pcd = None
     
     def apply_transformation(self, pcd, registration_result):
         """
@@ -346,10 +347,7 @@ class FrameProcessor:
             merged_pcd = cropped_loader_pcd + self.loader_pcd  # You can also use self.loader_pcd.extend(cropped_loader_pcd.points)
 
             # Step 4.1: Visualize the merged point cloud
-            o3d.visualization.draw_geometries(
-                [merged_pcd],
-                window_name="Merged Point Cloud"
-            )
+            self.loader_processed_pcd = merged_pcd
 
             # Step 4: Volume estimation for the cropped loader point cloud
             points = np.asarray(merged_pcd.points)
@@ -361,6 +359,7 @@ class FrameProcessor:
             # if not detected, set zero
             self.is_frame_loader = False
             self.loader_volume = 0.0
+            self.loader_processed_pcd = None
         
         return
 
@@ -408,6 +407,15 @@ class FrameProcessor:
         - float: The estimated volume of the loader.
         """
         return self.loader_volume
+    
+    def get_loader_processed_pcd(self):
+        """
+        Retrieve the processed loader point cloud which wait to be estimated.
+
+        Returns:
+        - pcd
+        """
+        return self.loader_processed_pcd
 
 def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_path, loader_pcd_path, args):
     # Load camera intrinsics
@@ -462,9 +470,16 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
         print(f"Frame processed in {time.time() - start_time:.2f} seconds")
     
         # Get final results
-        loader_volume = processor.get_loader_volume()
-        
-        print(f"Loader volume: {loader_volume:.4f} cubic meters")
+        if processor.get_is_frame_loader():
+            loader_volume = processor.get_loader_volume()
+            loader_processed_pcd = processor.get_loader_processed_pcd()
+            o3d.visualization.draw_geometries(
+                [loader_processed_pcd],
+                window_name="Loader Processed Point Cloud"
+            )
+            print(f"    Loader volume: {loader_volume:.4f} cubic meters")
+        else:
+            print(f"Loader not detected.")
     
     
     tsdf_volume = processor.get_tsdf_volume()
