@@ -158,7 +158,7 @@ class FrameProcessor:
         Initialize the frame processor for handling frames and processing them through the SLAM system.
         
         Args:
-        - trans_init_loader_path (str): Path to the initial loader transformation matrix (JSON/NPY).
+        - trans_init_loader: the initial loader transformation matrix.
         """
         self.index = 0  # Start with the first frame
         self.rgb_images = []  # To store RGB images
@@ -448,6 +448,8 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
     
     # Process each frame
     for i, (rgb_path, depth_path) in enumerate(zip(rgb_files, depth_files)):
+        if i < 150:
+            continue
         print(f"Processing frame {i+1}/{len(rgb_files)}: {os.path.basename(rgb_path)}")
         start_time = time.time()
         
@@ -464,8 +466,8 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
         
         # Get and visualize point cloud
         pcd = processor.get_last_pcd()
-        # if pcd:
-        #     o3d.visualization.draw_geometries([pcd])
+        if i > 150 and i % 10 == 0 and pcd:
+            o3d.visualization.draw_geometries([pcd])
         
         print(f"Frame processed in {time.time() - start_time:.2f} seconds")
     
@@ -473,10 +475,11 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
         if processor.get_is_frame_loader():
             loader_volume = processor.get_loader_volume()
             loader_processed_pcd = processor.get_loader_processed_pcd()
-            o3d.visualization.draw_geometries(
-                [loader_processed_pcd],
-                window_name="Loader Processed Point Cloud"
-            )
+            if i > 150 and i % 10 == 0:
+                o3d.visualization.draw_geometries(
+                    [loader_processed_pcd],
+                    window_name="Loader Processed Point Cloud"
+                )
             print(f"    Loader volume: {loader_volume:.4f} cubic meters")
         else:
             print(f"Loader not detected.")
@@ -509,8 +512,10 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
     o3d.visualization.draw_geometries([mesh], window_name="3D Reconstruction")
 
 if __name__ == "__main__":
+    folder_name = "sequence1"
+    
     parser = argparse.ArgumentParser(description="Process RGBD frames for SLAM and volume estimation")
-    parser.add_argument("--config", type=str, default=r"data\loader\loader.yaml", help="Path to config file.")
+    parser.add_argument("--config", type=str, default=r"data\{}\{}.yaml".format(folder_name, folder_name), help="Path to config file.")
     parser.add_argument("--follow_camera", action="store_true", help="Make view-point follow the camera motion")
     
     # Parse and load configuration
@@ -518,11 +523,11 @@ if __name__ == "__main__":
     args = load_config(parsed_args)
     
     main(
-        rgb_folder=r"data\loader\color",
-        depth_folder=r"data\loader\depth",
-        trans_init_path=r"data\loader\trans_init.json",
-        cam_intr_path=r"data\loader\cam_intr.json",
-        depth_intr_path=r"data\loader\dep_intr.json",
-        loader_pcd_path=r"data\loader\loader_model.ply",
+        rgb_folder=r"data\{}\color".format(folder_name),
+        depth_folder=r"data\{}\depth".format(folder_name),
+        trans_init_path=r"data\{}\trans_init.json".format(folder_name),
+        cam_intr_path=r"data\{}\cam_intr.json".format(folder_name),
+        depth_intr_path=r"data\{}\dep_intr.json".format(folder_name),
+        loader_pcd_path=r"data\loader_model.ply",
         args=args
     )
