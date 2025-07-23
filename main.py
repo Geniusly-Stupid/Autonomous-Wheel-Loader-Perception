@@ -338,6 +338,10 @@ class FrameProcessor:
 
             # Step 3: Project loader model based on the pose and crop it
             transformed_loader_pcd = self.apply_transformation(pcd, loader_poses)
+            # o3d.visualization.draw_geometries(
+            #     [transformed_loader_pcd + self.loader_pcd],
+            #     window_name="Loader Processed Point Cloud"
+            # )
 
             # Crop the transformed loader model
             bbox = o3d.geometry.AxisAlignedBoundingBox(self.min_bound_tracker, self.max_bound_tracker)
@@ -448,8 +452,6 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
     
     # Process each frame
     for i, (rgb_path, depth_path) in enumerate(zip(rgb_files, depth_files)):
-        if i < 150:
-            continue
         print(f"Processing frame {i+1}/{len(rgb_files)}: {os.path.basename(rgb_path)}")
         start_time = time.time()
         
@@ -466,7 +468,7 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
         
         # Get and visualize point cloud
         pcd = processor.get_last_pcd()
-        if i > 150 and i % 10 == 0 and pcd:
+        if i > 179 and i % 10 == 0 and pcd:
             o3d.visualization.draw_geometries([pcd])
         
         print(f"Frame processed in {time.time() - start_time:.2f} seconds")
@@ -475,9 +477,10 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
         if processor.get_is_frame_loader():
             loader_volume = processor.get_loader_volume()
             loader_processed_pcd = processor.get_loader_processed_pcd()
-            if i > 150 and i % 10 == 0:
+            if i > 179 and i % 10 == 0:
+                coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
                 o3d.visualization.draw_geometries(
-                    [loader_processed_pcd],
+                    [loader_processed_pcd, coord_frame],
                     window_name="Loader Processed Point Cloud"
                 )
             print(f"    Loader volume: {loader_volume:.4f} cubic meters")

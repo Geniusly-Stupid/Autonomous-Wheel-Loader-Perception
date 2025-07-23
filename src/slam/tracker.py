@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.slam.icp import ICP
+from icp import ICP
 
 
 class ICPTracker(nn.Module):

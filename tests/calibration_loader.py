@@ -92,7 +92,7 @@ def main():
     # Path configuration
     data_dir = r"D:\Desktop\450\project_code\Autonomous-Wheel-Loader-Perception\data\sequence1"
     depth_intr_path = os.path.join(data_dir, "dep_intr.json")
-    depth_path = os.path.join(data_dir, "depth", "depth_0165.png")
+    depth_path = os.path.join(data_dir, "depth", "depth_0160.png")
     loader_model_path = r"D:\Desktop\450\project_code\Autonomous-Wheel-Loader-Perception\data\loader_model.ply"
     
     # Load camera intrinsics

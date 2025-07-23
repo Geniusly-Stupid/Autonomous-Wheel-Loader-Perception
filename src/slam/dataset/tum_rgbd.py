@@ -84,7 +84,7 @@ class TUMDataset(torch.utils.data.Dataset):
             # read images
             rgb = np.array(imageio.imread(path.join(data_path, "rgb/{:04d}.png".format(i)))).astype(np.float32)
             depth = np.array(imageio.imread(path.join(data_path, "depth/{:04d}.png".format(i)))).astype(np.float32)
-            depth /= 5000.  # TODO: put depth factor to args
+            depth /= 1000.  # TODO: put depth factor to args
             d_max += [depth.max()]
             d_min += [depth.min()]
             # depth = cv2.bilateralFilter(depth, 5, 0.2, 15)
