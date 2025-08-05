@@ -1,9 +1,9 @@
 def generate_files_and_trajectory(folder_name="rgb", 
                                    start_timestamp=0.0, 
                                    interval=0.1, 
-                                   total_images=1000, 
-                                   output_image_file=r"D:\Desktop\450\project_code\Autonomous-Wheel-Loader-Perception\data\sequence1\rgb.txt", 
-                                   output_trajectory_file=r"D:\Desktop\450\project_code\Autonomous-Wheel-Loader-Perception\data\sequence1\trajectory.txt",
+                                   total_images=3046, 
+                                   output_image_file=r"D:\cryst\ECE4500J\Autonomous-Wheel-Loader-Perception\data\sequence1\rgb.txt", 
+                                   output_trajectory_file=r"D:\cryst\ECE4500J\Autonomous-Wheel-Loader-Perception\data\sequence1\trajectory.txt",
                                     type_name="jpg"):
     # Generate timestamps at 0.1-second intervals
     timestamps = [f"{start_timestamp + i * interval:.6f}" for i in range(total_images)]
@@ -29,7 +29,7 @@ def generate_files_and_trajectory(folder_name="rgb",
     print(f"Output written to {output_image_file} and {output_trajectory_file}")
 
 if __name__ == "__main__":
-    generate_files_and_trajectory(folder_name="color", total_images=390, type_name="jpg")
-    generate_files_and_trajectory(folder_name="depth", total_images=390, 
-                                   output_image_file=r"D:\Desktop\450\project_code\Autonomous-Wheel-Loader-Perception\data\sequence1\depth.txt", 
-                                   output_trajectory_file=r"D:\Desktop\450\project_code\Autonomous-Wheel-Loader-Perception\data\sequence1\groundtruth.txt", type_name="png")
+    generate_files_and_trajectory(folder_name="color", total_images=3046, type_name="jpg")
+    generate_files_and_trajectory(folder_name="depth", total_images=3046, 
+                                   output_image_file=r"D:\cryst\ECE4500J\Autonomous-Wheel-Loader-Perception\data\sequence1\depth.txt", 
+                                   output_trajectory_file=r"D:\cryst\ECE4500J\Autonomous-Wheel-Loader-Perception\data\sequence1\groundtruth.txt", type_name="png")

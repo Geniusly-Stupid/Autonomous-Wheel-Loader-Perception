@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import open3d as o3d
 from fusion import TSDFVolumeTorch
-from dataset.tum_rgbd import TUMDataset
+from dataset.tum_rgbd import TUMDatasetOnline
 from tracker import ICPTracker
 from utils import load_config, get_volume_setting, get_time
 
@@ -20,12 +20,15 @@ vis_param.curr_pose = None
 def refresh(vis):
     if vis:
         # This spares slots for meshing thread to emit commands.
-        time.sleep(0.01)
+        time.sleep(0.1)
 
-    if vis_param.frame_id == vis_param.n_frames:
-        return False
-
-    sample = vis_param.dataset[vis_param.frame_id]
+    try:
+        sample = vis_param.dataset[vis_param.frame_id]
+    except FileNotFoundError:
+        # Gracefully wait and skip processing this frame
+        time.sleep(0.05)
+        return
+    
     color0, depth0, pose_gt, K = sample  # use live image as template image (0)
     # depth0[depth0 <= 0.5] = 0.
     if vis_param.frame_id == 0:
@@ -114,7 +117,7 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = torch.device("cpu")
-    dataset = TUMDataset(os.path.join(args.data_root), device, near=args.near, far=args.far, img_scale=0.25)
+    dataset = TUMDatasetOnline(os.path.join(args.data_root), device, near=args.near, far=args.far, img_scale=0.25)
     vol_dims, vol_origin, voxel_size = get_volume_setting(args)
 
     vis_param.args = args

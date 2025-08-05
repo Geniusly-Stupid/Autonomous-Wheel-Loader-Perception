@@ -8,6 +8,8 @@ import trimesh
 import time
 import os
 import glob
+import threading
+from queue import Queue
 from src.slam.fusion import TSDFVolumeTorch
 from src.slam.dataset.tum_rgbd import TUMDataset
 from src.slam.tracker import ICPTracker
@@ -153,7 +155,7 @@ class SLAM:
 
 
 class FrameProcessor:
-    def __init__(self, trans_init_loader, cam_intr, depth_intr, loader_pcd, args):
+    def __init__(self, trans_init_loader, cam_intr, depth_intr, loader_pcd, args, rgb_image, depth_image):
         """
         Initialize the frame processor for handling frames and processing them through the SLAM system.
         
@@ -182,6 +184,18 @@ class FrameProcessor:
         self.depth_intr = depth_intr
         print("cam_intr: \n", cam_intr)
         print("depth_intr: \n", depth_intr)
+
+        # Set up depth camera intrinsics using provided matrix
+        self.depth_intrinsics = o3d.camera.PinholeCameraIntrinsic()
+        self.depth_intrinsics.set_intrinsics(width=depth_image.shape[1], height=depth_image.shape[0],
+                                        fx=self.depth_intr[0, 0], fy=self.depth_intr[1, 1],
+                                        cx=self.depth_intr[0, 2], cy=self.depth_intr[1, 2])
+
+        # Set up RGB camera intrinsics using provided matrix
+        self.rgb_intrinsics = o3d.camera.PinholeCameraIntrinsic()
+        self.rgb_intrinsics.set_intrinsics(width=rgb_image.shape[1], height=rgb_image.shape[0],
+                                      fx=self.cam_intr[0, 0], fy=self.cam_intr[1, 1],
+                                      cx=self.cam_intr[0, 2], cy=self.cam_intr[1, 2])
         
         # SLAM setting
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -243,20 +257,8 @@ class FrameProcessor:
         depth_image_o3d = o3d.geometry.Image(depth_image)
         rgb_image_o3d = o3d.geometry.Image(rgb_image)
 
-        # Set up depth camera intrinsics using provided matrix
-        depth_intrinsics = o3d.camera.PinholeCameraIntrinsic()
-        depth_intrinsics.set_intrinsics(width=depth_image.shape[1], height=depth_image.shape[0],
-                                        fx=depth_intr_matrix[0, 0], fy=depth_intr_matrix[1, 1],
-                                        cx=depth_intr_matrix[0, 2], cy=depth_intr_matrix[1, 2])
-
-        # Set up RGB camera intrinsics using provided matrix
-        rgb_intrinsics = o3d.camera.PinholeCameraIntrinsic()
-        rgb_intrinsics.set_intrinsics(width=rgb_image.shape[1], height=rgb_image.shape[0],
-                                      fx=rgb_intr_matrix[0, 0], fy=rgb_intr_matrix[1, 1],
-                                      cx=rgb_intr_matrix[0, 2], cy=rgb_intr_matrix[1, 2])
-
         # Generate point cloud from depth image using depth camera parameters
-        pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_image_o3d, depth_intrinsics)
+        pcd = o3d.geometry.PointCloud.create_from_depth_image(depth_image_o3d, self.depth_intrinsics)
 
         # Get point coordinates from the point cloud
         points = np.asarray(pcd.points)
@@ -317,14 +319,14 @@ class FrameProcessor:
         # SLAM 
         # --------------------
         
-        # Process SLAM with the current frame
-        self.slam_system.process_frame(rgb_image, depth_image, self.cam_pose, color_img=rgb_image)
+        # # Process SLAM with the current frame
+        # self.slam_system.process_frame(rgb_image, depth_image, self.cam_pose, color_img=rgb_image)
 
-        # Get the updated camera pose from SLAM system (you'll need to implement this)
-        self.cam_pose = self.slam_system.get_current_pose()
+        # # Get the updated camera pose from SLAM system (you'll need to implement this)
+        # self.cam_pose = self.slam_system.get_current_pose()
         
-        # STEP 4: Return the TSDF volume or other relevant information
-        self.tsdf_volume = self.slam_system.get_tsdf()
+        # # STEP 4: Return the TSDF volume or other relevant information
+        # self.tsdf_volume = self.slam_system.get_tsdf()
         
         # ---------------------------
         # VOLUME_ESTIMATION
@@ -421,6 +423,14 @@ class FrameProcessor:
         """
         return self.loader_processed_pcd
 
+def preload_next_frame(rgb_path, depth_path, queue):
+    if os.path.exists(rgb_path) and os.path.exists(depth_path):
+        rgb_image = cv2.imread(rgb_path)
+        depth_image = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+        queue.put((rgb_image, depth_image))
+    else:
+        queue.put((None, None))
+
 def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_path, loader_pcd_path, args):
     # Load camera intrinsics
     def load_matrix(path):
@@ -437,82 +447,70 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
     trans_init = load_matrix(trans_init_path)
     loader_pcd = o3d.io.read_point_cloud(loader_pcd_path)
     
+    while(True):
+        # Initial preload
+        rgb_path = os.path.join(rgb_folder, f"color_0000.jpg")
+        depth_path = os.path.join(depth_folder, f"depth_0000.png")
+        # Get preloaded frame
+        rgb_image = cv2.imread(rgb_path)
+        depth_image = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+        if rgb_image is None or depth_image is None:
+            print(f"Waiting for frame 0000 to appear...")
+            time.sleep(0.05)
+            continue
+        break
+    
     # Initialize frame processor with matrices
     processor = FrameProcessor(
         trans_init_loader=trans_init,
         cam_intr=rgb_intr,
         depth_intr=depth_intr,
         loader_pcd=loader_pcd,
-        args=args
+        args=args,
+        rgb_image=np.array(rgb_image),
+        depth_image=np.array(depth_image)
     )
     
-    # Get sorted list of image files
-    rgb_files = sorted(glob.glob(os.path.join(rgb_folder, '*.jpg')))
-    depth_files = sorted(glob.glob(os.path.join(depth_folder, '*.png')))
-    
     # Process each frame
-    for i, (rgb_path, depth_path) in enumerate(zip(rgb_files, depth_files)):
-        print(f"Processing frame {i+1}/{len(rgb_files)}: {os.path.basename(rgb_path)}")
-        start_time = time.time()
-        
-        # Read images
-        rgb_image = cv2.imread(rgb_path)
-        depth_image = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-        
-        if rgb_image is None or depth_image is None:
-            print(f"Error loading images: {rgb_path} or {depth_path}")
-            continue
+    frame_idx = 0
+    max_idx = 9999  # You can increase this if your range goes beyond 9999
+    prefetch_queue = Queue(maxsize=1)
+
+    try:
+        threading.Thread(target=preload_next_frame, args=(rgb_path, depth_path, prefetch_queue)).start()
+
+        while frame_idx <= max_idx:
+            if rgb_image is None or depth_image is None:
+                print(f"Waiting for frame {frame_idx:04d} to appear...")
+                time.sleep(0.05)
+                continue
+
+            print(f"Processing frame {frame_idx:04d}")
+            start_time = time.time()
+
+            # Start preloading the next frame while we process this one
+            next_idx = frame_idx + 1
+            if next_idx <= max_idx:
+                next_rgb = os.path.join(rgb_folder, f"color_{next_idx:04d}.jpg")
+                next_depth = os.path.join(depth_folder, f"depth_{next_idx:04d}.png")
+                threading.Thread(target=preload_next_frame, args=(next_rgb, next_depth, prefetch_queue)).start()
+
+            # Process current frame
+            processor.process_next_frame(rgb_image, depth_image)
+
+            # Loader detection logic
+            if processor.get_is_frame_loader():
+                loader_volume = processor.get_loader_volume()
+                print(f"    Loader volume: {loader_volume:.6f} cubic meters")
+            else:
+                print("Loader not detected.")
+
+            print(f"Frame processed in {time.time() - start_time:.2f} seconds")
+            frame_idx += 1
             
-        # Process frame
-        processor.process_next_frame(rgb_image, depth_image)
-        
-        # Get and visualize point cloud
-        pcd = processor.get_last_pcd()
-        if i > 179 and i % 10 == 0 and pcd:
-            o3d.visualization.draw_geometries([pcd])
-        
-        print(f"Frame processed in {time.time() - start_time:.2f} seconds")
+    except KeyboardInterrupt:
+        print("Stopped real-time processing.")
     
-        # Get final results
-        if processor.get_is_frame_loader():
-            loader_volume = processor.get_loader_volume()
-            loader_processed_pcd = processor.get_loader_processed_pcd()
-            if i > 179 and i % 10 == 0:
-                coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-                o3d.visualization.draw_geometries(
-                    [loader_processed_pcd, coord_frame],
-                    window_name="Loader Processed Point Cloud"
-                )
-            print(f"    Loader volume: {loader_volume:.4f} cubic meters")
-        else:
-            print(f"Loader not detected.")
-    
-    
-    tsdf_volume = processor.get_tsdf_volume()
-    
-    # Extract mesh from TSDF volume
-    verts, faces, norms, colors = tsdf_volume.get_mesh()
-
-    # Create Open3D mesh object
-    mesh = o3d.geometry.TriangleMesh()
-    mesh.vertices = o3d.utility.Vector3dVector(verts)
-    mesh.triangles = o3d.utility.Vector3iVector(faces)
-    mesh.vertex_normals = o3d.utility.Vector3dVector(norms)
-    mesh.vertex_colors = o3d.utility.Vector3dVector(colors[:, :3])  # Use only RGB if there's alpha channel
-
-    # Simplify mesh if needed (optional)
-    mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=100000)
-
-    # Remove duplicate vertices and triangles
-    mesh = mesh.remove_duplicated_vertices()
-    mesh = mesh.remove_duplicated_triangles()
-
-    # Compute normals if not already present
-    if not mesh.has_vertex_normals():
-        mesh.compute_vertex_normals()
-
-    print("TSDF reconstruction result:")
-    o3d.visualization.draw_geometries([mesh], window_name="3D Reconstruction")
 
 if __name__ == "__main__":
     folder_name = "sequence1"
@@ -526,8 +524,8 @@ if __name__ == "__main__":
     args = load_config(parsed_args)
     
     main(
-        rgb_folder=r"data\{}\color".format(folder_name),
-        depth_folder=r"data\{}\depth".format(folder_name),
+        rgb_folder=r"data\{}\processed\color".format(folder_name),
+        depth_folder=r"data\{}\processed\depth".format(folder_name),
         trans_init_path=r"data\{}\trans_init.json".format(folder_name),
         cam_intr_path=r"data\{}\cam_intr.json".format(folder_name),
         depth_intr_path=r"data\{}\dep_intr.json".format(folder_name),
