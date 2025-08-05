@@ -5,71 +5,76 @@ import matplotlib.pyplot as plt
 import open3d as o3d
 
 from src.slam.dataset import preprocess
-from src.slam import kinfu
 from src.slam import kinfu_gui_streamlit
 from src.visualization import visualize_ply
 from src import volume_estimation
 
-CONFIG_PATH = "src/slam/configs/fr1_room.yaml"
+import logging
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='[%(levelname)s] %(filename)s:%(lineno)d - %(message)s'
+)
+
+CONFIG_PATH = "src/slam/configs/new_dataset.yaml"
 SAVE_DIR = "data/reconstruct/slam"
 PLY_PATH = os.path.join(SAVE_DIR, "mesh.ply")
 
 st.set_page_config(page_title="SLAM & Volume Estimation App", layout="wide")
-st.title("🤖 SLAM 重建 & 点云体积估计可视化")
+st.title("🤖 SLAM Reconstruction & Point Cloud Volume Estimation")
 
-st.sidebar.header("功能选择")
+st.sidebar.header("Function Selection")
 options = [
-    "1️⃣ 数据预处理",
-    "2️⃣ 运行 KinFu 重建",
-    "3️⃣ 逐帧 SLAM 可视化 (Streamlit)",
-    "4️⃣ 加载并可视化 PLY 文件",
-    "5️⃣ 点云体积估计示例"
+    "1️⃣ Data Preprocessing",
+    "2️⃣ Run KinFu Reconstruction",
+    "3️⃣ Frame-by-Frame SLAM Visualization (Streamlit)",
+    "4️⃣ Load and Visualize PLY File",
+    "5️⃣ Point Cloud Volume Estimation Example"
 ]
-choice = st.sidebar.radio("请选择功能", options)
+choice = st.sidebar.radio("Please select a function", options)
 
-# ================== 数据预处理 ==================
+# ================== Data Preprocessing ==================
 if choice == options[0]:
-    st.subheader("数据预处理")
-    if st.button("开始执行"):
+    st.subheader("Data Preprocessing")
+    if st.button("Start"):
         preprocess.main(CONFIG_PATH)
-        st.success("✅ 预处理完成")
+        st.success("✅ Preprocessing completed")
 
-# ================== KinFu 重建 ==================
+# ================== KinFu Reconstruction ==================
 elif choice == options[1]:
-    st.subheader("运行 KinFu 重建")
-    if st.button("开始重建"):
+    st.subheader("Run KinFu Reconstruction")
+    if st.button("Start Reconstruction"):
         kinfu.main(CONFIG_PATH, SAVE_DIR)
-        st.success("✅ 重建完成")
+        st.success("✅ Reconstruction completed")
         if os.path.exists(PLY_PATH):
-            st.info("已生成 mesh.ply，可在【加载并可视化 PLY 文件】查看")
+            st.info("mesh.ply generated. You can view it in [Load and Visualize PLY File]")
 
-# ================== Frame-by-Frame SLAM 可视化 ==================
+# ================== Frame-by-Frame SLAM Visualization ==================
 elif choice == options[2]:
-    st.subheader("逐帧 SLAM 可视化 (Streamlit)")
-    follow = st.checkbox("跟随相机视角", value=True)
-    if st.button("开始可视化"):
+    st.subheader("Frame-by-Frame SLAM Visualization (Streamlit)")
+    follow = st.checkbox("Follow camera view", value=True)
+
+    if st.button("Start Visualization"):
+        st.info("⚙️ Reconstructing mesh from SLAM frames...")
         mesh = kinfu_gui_streamlit.main_streamlit(CONFIG_PATH, follow_camera=follow)
-        if mesh is not None:
-            pcd = mesh.sample_points_uniformly(number_of_points=5000)
 
-            vis = o3d.visualization.Visualizer()
-            vis.create_window(visible=False)
-            vis.add_geometry(mesh)
-            vis.poll_events()
-            vis.update_renderer()
-            img = vis.capture_screen_float_buffer(True)
-            vis.destroy_window()
+        if mesh is not None and not mesh.is_empty():
+            st.success("✅ Mesh reconstructed. Launching Open3D WebRTC viewer...")
 
-            plt.imshow(np.asarray(img))
-            plt.axis('off')
-            st.pyplot(plt)
-            st.success("✅ 可视化完成")
+            # Start WebRTC viewer
+            logging.debug("")
+            o3d.visualization.webrtc_server.enable_webrtc()
+            logging.debug("")
+            o3d.visualization.draw(mesh)
+            logging.debug("")
+
+            st.info("🟢 Open3D WebRTC viewer launched in browser tab or embed.")
         else:
-            st.error("❌ 没有生成 Mesh")
+            st.error("❌ Mesh reconstruction failed or mesh is empty.")
 
-# ================== 加载并可视化 PLY 文件 ==================
+# ================== Load and Visualize PLY File ==================
 elif choice == options[3]:
-    st.subheader("加载并显示 PLY 文件")
+    st.subheader("Load and Visualize PLY File")
     if os.path.exists(PLY_PATH):
         mesh = visualize_ply.load_ply(PLY_PATH)
         if mesh and not mesh.is_empty():
@@ -84,28 +89,28 @@ elif choice == options[3]:
             plt.imshow(np.asarray(img))
             plt.axis('off')
             st.pyplot(plt)
-            st.success("✅ PLY 文件可视化完成")
+            st.success("✅ PLY file visualization completed")
         else:
-            st.error("❌ mesh.ply 文件为空")
+            st.error("❌ mesh.ply file is empty")
     else:
-        st.warning("请先运行重建步骤生成 mesh.ply")
+        st.warning("Please run the reconstruction step first to generate mesh.ply")
 
-# ================== 点云体积估计 ==================
+# ================== Point Cloud Volume Estimation ==================
 elif choice == options[4]:
-    st.subheader("点云体积估计示例")
+    st.subheader("Point Cloud Volume Estimation Example")
 
     shape_options = list(volume_estimation.ShapeGenerator.get_all_shapes().keys())
-    shape_choice = st.selectbox("选择形状", shape_options)
-    alpha = st.slider("Alpha shape 参数", 1, 30, 10)
+    shape_choice = st.selectbox("Select shape", shape_options)
+    alpha = st.slider("Alpha shape parameter", 1, 30, 10)
 
-    if st.button("生成并估计体积"):
+    if st.button("Generate and Estimate Volume"):
         points, true_volume = volume_estimation.ShapeGenerator.get_all_shapes()[shape_choice]()
         vol_convex = volume_estimation.VolumeEstimator.estimate_convex_hull(points)
         vol_alpha, is_watertight = volume_estimation.VolumeEstimator.estimate_alpha_shape(points, alpha=alpha)
 
-        st.write(f"理论体积: {true_volume:.4f}" if true_volume else "理论体积: N/A")
-        st.write(f"Convex Hull 估计体积: {vol_convex:.4f}")
-        st.write(f"Alpha Shape 估计体积: {vol_alpha:.4f} (Watertight: {is_watertight})")
+        st.write(f"Theoretical volume: {true_volume:.4f}" if true_volume else "Theoretical volume: N/A")
+        st.write(f"Convex Hull estimated volume: {vol_convex:.4f}")
+        st.write(f"Alpha Shape estimated volume: {vol_alpha:.4f} (Watertight: {is_watertight})")
 
         fig = plt.figure(figsize=(6, 6))
         ax = fig.add_subplot(111, projection='3d')

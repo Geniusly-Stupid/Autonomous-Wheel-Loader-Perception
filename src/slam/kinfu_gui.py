@@ -4,10 +4,10 @@ import argparse
 import numpy as np
 import torch
 import open3d as o3d
-from fusion import TSDFVolumeTorch
-from dataset.tum_rgbd import TUMDataset
-from tracker import ICPTracker
-from utils import load_config, get_volume_setting, get_time
+from .fusion import TSDFVolumeTorch
+from .dataset.tum_rgbd import TUMDatasetOnline
+from .tracker import ICPTracker
+from .utils import load_config, get_volume_setting, get_time
 
 
 vis_param = argparse.Namespace()
@@ -20,7 +20,7 @@ vis_param.curr_pose = None
 def refresh(vis):
     if vis:
         # This spares slots for meshing thread to emit commands.
-        time.sleep(0.01)
+        time.sleep(0.1)
 
     if vis_param.frame_id == vis_param.n_frames:
         return False
@@ -114,7 +114,7 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = torch.device("cpu")
-    dataset = TUMDataset(os.path.join(args.data_root), device, near=args.near, far=args.far, img_scale=0.25)
+    dataset = TUMDatasetOnline(os.path.join(args.data_root), device, near=args.near, far=args.far, img_scale=0.25)
     vol_dims, vol_origin, voxel_size = get_volume_setting(args)
 
     vis_param.args = args
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     vis.remove_geometry(coord_axes, reset_bounding_box=False)
     # set initial view-point
     c2w0 = dataset[0][2]
-    follow_camera(vis, c2w0.cpu().numpy())
+    # follow_camera(vis, c2w0.cpu().numpy())
     # start reconstruction and visualization
     vis.run()
     vis.destroy_window()

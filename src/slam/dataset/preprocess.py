@@ -6,59 +6,6 @@ import argparse
 from .tum_rgbd import get_calib
 from .utils import load_config
 
-def main(config_path):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default=config_path)
-    args = load_config(parser.parse_args())
-
-    out_dir = os.path.join(args.data_root, "processed")
-    parser = argparse.ArgumentParser()
-    # standard configs
-    parser.add_argument('--config', type=str, default="../configs/fr1_desk.yaml", help='Path to config file.')
-    args = load_config(parser.parse_args())
-    out_dir = os.path.join(args.data_root, "processed")
-
-    # create association files
-    get_association(os.path.join(args.data_root, "depth.txt"), os.path.join(args.data_root, "groundtruth.txt"), os.path.join(args.data_root, "dep_traj.txt"))
-    get_association(os.path.join(args.data_root, "rgb.txt"), os.path.join(args.data_root, "dep_traj.txt"), os.path.join(args.data_root, "rgb_dep_traj.txt"))
-
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    out_rgb_dir = os.path.join(out_dir, "rgb")
-    if not os.path.exists(out_rgb_dir):
-        os.makedirs(out_rgb_dir)
-    out_dep_dir = os.path.join(out_dir, "depth")
-    if not os.path.exists(out_dep_dir):
-        os.makedirs(out_dep_dir)
-
-    # rename image files and save c2w poses
-    poses = []
-    with open(os.path.join(args.data_root, "rgb_dep_traj.txt")) as f:
-        for i, line in enumerate(f.readlines()):
-            line_list = line.strip().split(" ")
-            rgb_file = line_list[1]
-            shutil.copyfile(os.path.join(args.data_root, rgb_file), os.path.join(out_rgb_dir, "%04d.png" % i))
-            dep_file = line_list[3]
-            shutil.copyfile(os.path.join(args.data_root, dep_file), os.path.join(out_dep_dir, "%04d.png" % i))
-            poses += [tum2matrix([float(x) for x in line_list[5:]])]
-
-    np.savez(os.path.join(out_dir, "raw_poses.npz"), c2w_mats=poses)
-
-    # save projection matrices
-    K = np.eye(3)
-    intri = get_calib()[args.data_type]
-    K[0, 0] = intri[0]
-    K[1, 1] = intri[1]
-    K[0, 2] = intri[2]
-    K[1, 2] = intri[3]
-    camera_dict = np.load(os.path.join(out_dir, "raw_poses.npz"))
-    poses = camera_dict["c2w_mats"]
-    P_mats = []
-    for c2w in poses:
-        w2c = np.linalg.inv(c2w)
-        P = K @ w2c[:3, :]
-        P_mats += [P]
-    np.savez(os.path.join(out_dir, "cameras.npz"), world_mats=P_mats)
 
 def read_file_list(filename):
     """
@@ -155,4 +102,54 @@ def get_poses_from_associations(fname):
             poses += [tum2matrix(pose)]
 
     return poses
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    # standard configs
+    parser.add_argument('--config', type=str, default="../configs/fr1_desk.yaml", help='Path to config file.')
+    args = load_config(parser.parse_args())
+    out_dir = os.path.join(args.data_root, "processed")
+
+    # create association files
+    get_association(os.path.join(args.data_root, "depth.txt"), os.path.join(args.data_root, "groundtruth.txt"), os.path.join(args.data_root, "dep_traj.txt"))
+    get_association(os.path.join(args.data_root, "rgb.txt"), os.path.join(args.data_root, "dep_traj.txt"), os.path.join(args.data_root, "rgb_dep_traj.txt"))
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    out_rgb_dir = os.path.join(out_dir, "rgb")
+    if not os.path.exists(out_rgb_dir):
+        os.makedirs(out_rgb_dir)
+    out_dep_dir = os.path.join(out_dir, "depth")
+    if not os.path.exists(out_dep_dir):
+        os.makedirs(out_dep_dir)
+
+    # rename image files and save c2w poses
+    poses = []
+    with open(os.path.join(args.data_root, "rgb_dep_traj.txt")) as f:
+        for i, line in enumerate(f.readlines()):
+            line_list = line.strip().split(" ")
+            rgb_file = line_list[1]
+            shutil.copyfile(os.path.join(args.data_root, rgb_file), os.path.join(out_rgb_dir, "%04d.png" % i))
+            dep_file = line_list[3]
+            shutil.copyfile(os.path.join(args.data_root, dep_file), os.path.join(out_dep_dir, "%04d.png" % i))
+            poses += [tum2matrix([float(x) for x in line_list[5:]])]
+
+    np.savez(os.path.join(out_dir, "raw_poses.npz"), c2w_mats=poses)
+
+    # save projection matrices
+    K = np.eye(3)
+    intri = get_calib()[args.data_type]
+    K[0, 0] = intri[0]
+    K[1, 1] = intri[1]
+    K[0, 2] = intri[2]
+    K[1, 2] = intri[3]
+    camera_dict = np.load(os.path.join(out_dir, "raw_poses.npz"))
+    poses = camera_dict["c2w_mats"]
+    P_mats = []
+    for c2w in poses:
+        w2c = np.linalg.inv(c2w)
+        P = K @ w2c[:3, :]
+        P_mats += [P]
+    np.savez(os.path.join(out_dir, "cameras.npz"), world_mats=P_mats)
 

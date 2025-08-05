@@ -275,18 +275,22 @@ def exp_se3(xi):
     return T
 
 
-def invH(H):
+def invH(H, lambda_=1e-8):
     """ Generate (H+damp)^{-1}, with predicted damping values
-    :param approximate Hessian matrix JtWJ
+    :param H: Approximate Hessian matrix JtWJ
+    :param lambda_: Regularization term (damping) to avoid singular matrices
     -----------
-    :return the inverse of Hessian
+    :return: The inverse (or pseudo-inverse) of Hessian
     """
-    # GPU is much slower for matrix inverse when the size is small (compare to CPU)
-    # works (50x faster) than inversing the dense matrix in GPU
+    # Add damping term to the diagonal elements of H to make it non-singular
+    damped_H = H + lambda_ * torch.eye(H.size(0)).to(H.device)
+    
+    # Inverse computation, using CPU for small matrices if necessary
     if H.is_cuda:
-        invH = torch.inverse(H.cpu()).cuda()
+        invH = torch.inverse(damped_H.cpu()).cuda()  # Using CPU if the matrix is small
     else:
-        invH = torch.inverse(H)
+        invH = torch.inverse(damped_H)
+    
     return invH
 
 

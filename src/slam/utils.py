@@ -2,6 +2,7 @@ import time
 import torch
 import numpy as np
 import yaml
+
 from addict import Dict
 import argparse
 
@@ -9,7 +10,6 @@ import argparse
 class ForceKeyErrorDict(Dict):
     def __missing__(self, key):
         raise KeyError(key)
-
 
 def load_yaml(path):
     with open(path, encoding='utf8') as yaml_file:

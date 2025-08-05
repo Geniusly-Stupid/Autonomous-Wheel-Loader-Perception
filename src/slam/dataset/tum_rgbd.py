@@ -1,5 +1,5 @@
 import torch
-from os import path
+from os import path, listdir
 from tqdm import tqdm
 import imageio
 import cv2
@@ -9,7 +9,7 @@ import open3d as o3d
 
 def get_calib():
     return {
-        "fr1": [517.306408, 516.469215, 318.643040, 255.313989],
+        "fr1": [617.637756, 617.094971, 351.425432, 256.848378],
         "fr2": [520.908620, 521.007327, 325.141442, 249.701764],
         "fr3": [535.4, 539.2, 320.1, 247.6]
     }
@@ -84,7 +84,7 @@ class TUMDataset(torch.utils.data.Dataset):
             # read images
             rgb = np.array(imageio.imread(path.join(data_path, "rgb/{:04d}.png".format(i)))).astype(np.float32)
             depth = np.array(imageio.imread(path.join(data_path, "depth/{:04d}.png".format(i)))).astype(np.float32)
-            depth /= 5000.  # TODO: put depth factor to args
+            depth /= 1000.  # TODO: put depth factor to args
             d_max += [depth.max()]
             d_min += [depth.min()]
             # depth = cv2.bilateralFilter(depth, 5, 0.2, 15)
@@ -120,6 +120,7 @@ class TUMDataset(torch.utils.data.Dataset):
                self.c2w_all[idx].to(self.device), self.K_all[idx].to(self.device)
 
 
+
 class TUMDatasetOnline(torch.utils.data.Dataset):
     """
     Online TUM dataset loader, load images when __getitem__() is called
@@ -137,6 +138,7 @@ class TUMDatasetOnline(torch.utils.data.Dataset):
     ):
         super().__init__()
         assert path.isdir(rootdir), f"'{rootdir}' is not a directory"
+        self.rootdir = rootdir
         self.device = device
         self.img_scale = img_scale
         self.near = near
@@ -168,8 +170,8 @@ class TUMDatasetOnline(torch.utils.data.Dataset):
             c2w = torch.tensor(c2w, dtype=torch.float32)
             self.c2w_all.append(c2w)
             self.K_all.append(torch.from_numpy(intrinsics[:3, :3]))
-            self.rgb_files_all.append(path.join(data_path, "rgb/{:04d}.png".format(i)))
-            self.depth_files_all.append(path.join(data_path, "depth/{:04d}.png".format(i)))
+            self.rgb_files_all.append(path.join(data_path, "color/color_{:04d}.jpg".format(i)))
+            self.depth_files_all.append(path.join(data_path, "depth/depth_{:04d}.png".format(i)))
 
         self.n_images = len(self.rgb_files_all)
         H, W, _ = np.array(imageio.imread(self.rgb_files_all[0])).shape
@@ -177,31 +179,100 @@ class TUMDatasetOnline(torch.utils.data.Dataset):
         self.W = round(W * img_scale)
 
     def __len__(self):
+        self.check_for_new_frames()
         return self.n_images
 
     def __getitem__(self, idx):
-        K = self.K_all[idx].to(self.device)
-        c2w = self.c2w_all[idx].to(self.device)
-        # read images
+        self.check_for_new_frames()
+        # K = self.K_all[idx].to(self.device)
+        # c2w = self.c2w_all[idx].to(self.device)
+        # # read images
+        # rgb = np.array(imageio.imread(self.rgb_files_all[idx])).astype(np.float32)
+        # depth = np.array(imageio.imread(self.depth_files_all[idx])).astype(np.float32)
+        # depth /= 1000.
+        # # depth = cv2.bilateralFilter(depth, 5, 0.2, 15)
+        # invalid = (depth < self.near) | (depth > self.far)
+        # depth[invalid] = -1.
+        # # downscale the image size if needed
+        # if self.img_scale < 1.0:
+        #     H, W = rgb.shape[:2]
+        #     rsz_h, rsz_w = int(H * self.img_scale), int(W * self.img_scale)
+        #     rgb = cv2.resize(rgb, (rsz_w, rsz_h), interpolation=cv2.INTER_AREA)
+        #     depth = cv2.resize(depth, (rsz_w, rsz_h), interpolation=cv2.INTER_NEAREST)
+        #     K = self.K_all[idx].clone().numpy()
+        #     K[0, 0] *= self.img_scale
+        #     K[1, 1] *= self.img_scale
+        #     K[0, 2] *= self.img_scale
+        #     K[1, 2] *= self.img_scale
+
+        # rgb = torch.from_numpy(rgb).to(self.device)
+        # depth = torch.from_numpy(depth).to(self.device)
+
+        # return rgb, depth, c2w, K
+        import imageio
+        import cv2
+
         rgb = np.array(imageio.imread(self.rgb_files_all[idx])).astype(np.float32)
         depth = np.array(imageio.imread(self.depth_files_all[idx])).astype(np.float32)
-        depth /= 5000.
-        # depth = cv2.bilateralFilter(depth, 5, 0.2, 15)
-        depth[depth < self.near] = 0.
-        depth[depth > self.far] = -1.
-        # downscale the image size if needed
+        depth /= 1000.  # convert mm to meters
+
+        # Clip invalid depth
+        invalid = (depth < self.near) | (depth > self.far)
+        depth[invalid] = -1.
+
         if self.img_scale < 1.0:
-            full_size = list(rgb.shape[:2])
-            rsz_h, rsz_w = [round(hw * self.img_scale) for hw in full_size]
+            H, W = rgb.shape[:2]
+            rsz_h, rsz_w = int(H * self.img_scale), int(W * self.img_scale)
             rgb = cv2.resize(rgb, (rsz_w, rsz_h), interpolation=cv2.INTER_AREA)
             depth = cv2.resize(depth, (rsz_w, rsz_h), interpolation=cv2.INTER_NEAREST)
+
+            K = self.K_all[idx].clone().numpy()
             K[0, 0] *= self.img_scale
             K[1, 1] *= self.img_scale
             K[0, 2] *= self.img_scale
             K[1, 2] *= self.img_scale
+            K = torch.from_numpy(K)
+        else:
+            K = self.K_all[idx]
 
-        rgb = torch.from_numpy(rgb).to(self.device)
-        depth = torch.from_numpy(depth).to(self.device)
+        return (
+            torch.from_numpy(rgb).to(self.device),
+            torch.from_numpy(depth).to(self.device),
+            self.c2w_all[idx].to(self.device),
+            K.to(self.device)
+        )
+    
+    
+    def check_for_new_frames(self):
+        """
+        Check the directory for new frames and add them to the dataset.
+        """
+        data_path = path.join(self.rootdir, "processed")
+        cam_file = path.join(data_path, "cameras.npz")
 
-        return rgb, depth, c2w, K
+        # 获取当前存储的帧数
+        current_frame_count = len(self.rgb_files_all)
 
+        # 获取当前文件夹帧数
+        rgb_data_path = path.join(data_path, "color")
+        rgb_files = [f for f in listdir(rgb_data_path) if f.endswith('.jpg')]
+        current_frame_count_new1 = len(rgb_files)
+        
+        if current_frame_count == current_frame_count_new1:
+            return
+        
+        cam_file = path.join(data_path, "cameras.npz")
+        cam_dict = np.load(cam_file)
+        world_mats = cam_dict["world_mats"]  # K @ w2c
+
+        # 检查是否有新帧
+        for i in range(current_frame_count, current_frame_count_new1):
+            intrinsics, c2w = load_K_Rt_from_P(world_mats[i])
+            c2w = torch.tensor(c2w, dtype=torch.float32)
+            self.c2w_all.append(c2w)
+            self.K_all.append(torch.from_numpy(intrinsics[:3, :3]))
+            self.rgb_files_all.append(path.join(data_path, "color/color_{:04d}.jpg".format(i)))
+            self.depth_files_all.append(path.join(data_path, "depth/depth_{:04d}.png".format(i)))
+
+        # 更新帧数
+        self.n_images = len(self.rgb_files_all)
