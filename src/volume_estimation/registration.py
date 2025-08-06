@@ -46,7 +46,7 @@ def icp_registration_pcd(source, target, trans_init, threshold):
     reg_p2p = o3d.pipelines.registration.registration_icp(
         source, target, threshold, trans_init,
         o3d.pipelines.registration.TransformationEstimationPointToPoint(),\
-        criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=300))
+        criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100))
     return reg_p2p
 
 if __name__ == "__main__":

@@ -4,10 +4,10 @@ import argparse
 import numpy as np
 import torch
 import open3d as o3d
-from .fusion import TSDFVolumeTorch
-from .dataset.tum_rgbd import TUMDatasetOnline
-from .tracker import ICPTracker
-from .utils import load_config, get_volume_setting, get_time
+from fusion import TSDFVolumeTorch
+from dataset.tum_rgbd import TUMDatasetOnline
+from tracker import ICPTracker
+from utils import load_config, get_volume_setting, get_time
 
 
 vis_param = argparse.Namespace()
@@ -22,10 +22,13 @@ def refresh(vis):
         # This spares slots for meshing thread to emit commands.
         time.sleep(0.1)
 
-    if vis_param.frame_id == vis_param.n_frames:
-        return False
-
-    sample = vis_param.dataset[vis_param.frame_id]
+    try:
+        sample = vis_param.dataset[vis_param.frame_id]
+    except FileNotFoundError:
+        # Gracefully wait and skip processing this frame
+        time.sleep(0.05)
+        return
+    
     color0, depth0, pose_gt, K = sample  # use live image as template image (0)
     # depth0[depth0 <= 0.5] = 0.
     if vis_param.frame_id == 0:
@@ -137,7 +140,7 @@ if __name__ == "__main__":
     vis.remove_geometry(coord_axes, reset_bounding_box=False)
     # set initial view-point
     c2w0 = dataset[0][2]
-    # follow_camera(vis, c2w0.cpu().numpy())
+    follow_camera(vis, c2w0.cpu().numpy())
     # start reconstruction and visualization
     vis.run()
     vis.destroy_window()

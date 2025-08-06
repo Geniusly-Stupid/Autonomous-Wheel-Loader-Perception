@@ -7,7 +7,7 @@ import open3d as o3d
 from src.slam.dataset import preprocess
 from src.slam import kinfu_gui_streamlit
 from src.visualization import visualize_ply
-from src import volume_estimation
+from src.volume_estimation import volume_estimation
 
 import logging
 

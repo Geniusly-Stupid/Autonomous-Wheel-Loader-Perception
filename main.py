@@ -155,7 +155,7 @@ class SLAM:
 
 
 class FrameProcessor:
-    def __init__(self, trans_init_loader, cam_intr, depth_intr, loader_pcd, args, rgb_image, depth_image):
+    def __init__(self, trans_init_loader, cam_intr, depth_intr, loader_pcd, loader_pcd_icp, args, rgb_image, depth_image):
         """
         Initialize the frame processor for handling frames and processing them through the SLAM system.
         
@@ -174,6 +174,7 @@ class FrameProcessor:
         self.threshold = 1  # Threshold for loader detection
         
         self.loader_pcd = loader_pcd
+        self.loader_pcd_icp = loader_pcd_icp
         
         self.icp_threshold = 0.02
         
@@ -336,14 +337,14 @@ class FrameProcessor:
             self.is_frame_loader = True
 
             # Step 2: ICP registration between loader model and current frame
-            loader_poses = icp_registration_pcd(pcd, self.loader_pcd, self.trans_init_loader, self.icp_threshold)
+            loader_poses = icp_registration_pcd(pcd, self.loader_pcd_icp, self.trans_init_loader, self.icp_threshold)
 
             # Step 3: Project loader model based on the pose and crop it
             transformed_loader_pcd = self.apply_transformation(pcd, loader_poses)
-            # o3d.visualization.draw_geometries(
-            #     [transformed_loader_pcd + self.loader_pcd],
-            #     window_name="Loader Processed Point Cloud"
-            # )
+            o3d.visualization.draw_geometries(
+                [transformed_loader_pcd + self.loader_pcd],
+                window_name="Loader Processed Point Cloud"
+            )
 
             # Crop the transformed loader model
             bbox = o3d.geometry.AxisAlignedBoundingBox(self.min_bound_tracker, self.max_bound_tracker)
@@ -431,7 +432,7 @@ def preload_next_frame(rgb_path, depth_path, queue):
     else:
         queue.put((None, None))
 
-def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_path, loader_pcd_path, args):
+def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_path, loader_pcd_path, loader_pcd_icp_path, args):
     # Load camera intrinsics
     def load_matrix(path):
         if path.endswith(".json"):
@@ -446,6 +447,7 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
     depth_intr = load_matrix(depth_intr_path)
     trans_init = load_matrix(trans_init_path)
     loader_pcd = o3d.io.read_point_cloud(loader_pcd_path)
+    loader_pcd_icp = o3d.io.read_point_cloud(loader_pcd_icp_path)
     
     while(True):
         # Initial preload
@@ -466,6 +468,7 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
         cam_intr=rgb_intr,
         depth_intr=depth_intr,
         loader_pcd=loader_pcd,
+        loader_pcd_icp=loader_pcd_icp,
         args=args,
         rgb_image=np.array(rgb_image),
         depth_image=np.array(depth_image)
@@ -498,9 +501,15 @@ def main(rgb_folder, depth_folder, trans_init_path, cam_intr_path, depth_intr_pa
             # Process current frame
             processor.process_next_frame(rgb_image, depth_image)
 
-            # Loader detection logic
+            # Get final results
             if processor.get_is_frame_loader():
                 loader_volume = processor.get_loader_volume()
+                # loader_processed_pcd = processor.get_loader_processed_pcd()
+                # coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
+                # o3d.visualization.draw_geometries(
+                #     [loader_processed_pcd, coord_frame],
+                #     window_name="Loader Processed Point Cloud"
+                # )
                 print(f"    Loader volume: {loader_volume:.6f} cubic meters")
             else:
                 print("Loader not detected.")
@@ -530,5 +539,6 @@ if __name__ == "__main__":
         cam_intr_path=r"data\{}\cam_intr.json".format(folder_name),
         depth_intr_path=r"data\{}\dep_intr.json".format(folder_name),
         loader_pcd_path=r"data\loader_model.ply",
+        loader_pcd_icp_path=r"data\loader_model_version_2.ply",
         args=args
     )
